@@ -376,6 +376,245 @@ $('#dati').addEventListener('click', ()=> $('#impSheet').classList.add('on'));
 $('#impSheet').addEventListener('click', e=>{
   if(e.target.id==='impSheet' || e.target.id==='closeImp') $('#impSheet').classList.remove('on');
 });
+/* ---------- caricamento rosa giocatori ---------- */
+
+function aggiornaDatasetGiocatori(nuovi){
+  if(!Array.isArray(nuovi) || nuovi.length < 20){
+    throw new Error('Il file deve contenere almeno 20 giocatori.');
+  }
+
+  // Manteniamo lo storico dei giocatori già presenti
+  const vecchi = Object.assign({}, byId);
+
+  const validi = [];
+  const visti = new Set();
+
+  nuovi.forEach(raw => {
+    if(!raw) return;
+
+    const nome = String(raw.n || raw.nome || raw.name || '').trim();
+    if(!nome) return;
+
+    const id = chiave(nome);
+    if(!id || visti.has(id)) return;
+
+    visti.add(id);
+
+    const precedente = vecchi[id];
+
+    if(precedente){
+      // Mantiene tutti i dati già presenti e aggiorna
+      // solo i dati anagrafici eventualmente forniti dal file.
+      const p = Object.assign({}, precedente);
+
+      p.n = nome;
+
+      if(raw.sq || raw.squadra) p.sq = raw.sq || raw.squadra;
+      if(raw.r || raw.ruolo) p.r = String(raw.r || raw.ruolo).toUpperCase();
+
+      if(raw.qt != null || raw['Qt.A'] != null)
+        p.qt = numero(raw.qt != null ? raw.qt : raw['Qt.A']);
+
+      if(raw.fvm != null || raw.FVM != null)
+        p.fvm = numero(raw.fvm != null ? raw.fvm : raw.FVM);
+
+      validi.push(p);
+    }else{
+      // Nuovo giocatore: struttura minima compatibile
+      validi.push({
+        id,
+        n: nome,
+        sq: raw.sq || raw.squadra || '?',
+        r: String(raw.r || raw.ruolo || 'C').toUpperCase(),
+        rm: raw.rm || '',
+        fvm: numero(raw.fvm || raw.FVM) || numero(raw.qt || raw['Qt.A']) || 1,
+        qt: numero(raw.qt || raw['Qt.A']) || 1,
+
+        ptot: null,
+        fma: null,
+        mva: null,
+        pva: null,
+        pt: null,
+        tr: null,
+
+        aff: 'nessuno storico',
+        omo: false,
+
+        pct: null,
+        tit: null,
+        st: null,
+        mod: null,
+
+        s3: null,
+        pv3: null,
+        mv3: null,
+        fm3: null,
+        gf3: null,
+        ass3: null,
+        amm3: null,
+        gs3: null,
+
+        sc: null,
+        pvt: null,
+        fmc: null,
+        fmb: null,
+        gft: null,
+        ast: null,
+
+        pfm: null,
+        ppv: null,
+        pmv: null
+      });
+    }
+  });
+
+  if(validi.length < 20){
+    throw new Error('Ho riconosciuto solo ' + validi.length +
+      ' giocatori. Controlla il formato del file.');
+  }
+
+  // Sostituzione vera del dataset
+  P.length = 0;
+  validi.forEach(p => P.push(p));
+
+  // Ricostruzione dell'indice usato anche dall'OCR
+  Object.keys(byId).forEach(k => delete byId[k]);
+  P.forEach(p => byId[p.id] = p);
+
+  // Elimina dalla rosa eventuali giocatori non più presenti
+  for(const k of Object.keys(S.mie)){
+    if(!byId[k]) delete S.mie[k];
+  }
+
+  for(const k of Object.keys(S.altrui)){
+    if(!byId[k]) delete S.altrui[k];
+  }
+
+  // Ricalcola prezzi e costo atteso
+  calcolaPrezzi();
+  popolaDatalist();
+  redraw();
+
+  return validi.length;
+}
+
+function parseJSONGiocatori(testo){
+  const obj = JSON.parse(testo);
+
+  if(Array.isArray(obj)) return obj;
+  if(Array.isArray(obj.players)) return obj.players;
+
+  throw new Error('JSON non valido: manca la proprietà "players".');
+}
+
+function importaRosaDaTesto(testo, nomeFile=''){
+  const nome = nomeFile.toLowerCase();
+
+  // JSON
+  if(nome.endsWith('.json') || testo.trim().startsWith('{') || testo.trim().startsWith('[')){
+    return parseJSONGiocatori(testo);
+  }
+
+  // CSV / TXT / copia da Excel
+  const righe = tabella(testo);
+  const h = intestazione(righe);
+
+  if(h < 0)
+    throw new Error('Non trovo la colonna "Nome" nell’intestazione.');
+
+  const hdr = righe[h];
+  const corpo = righe.slice(h + 1);
+
+  const iN = indice(hdr, c => c === 'nome');
+  const iR = indice(hdr, c => c === 'r' || c === 'ruolo');
+  const iS = indice(hdr, c => c.startsWith('squadra'));
+  const iQ = indice(hdr, c =>
+    c.includes('qt.a') || c === 'qta' || c === 'qt' || c.includes('quotazione')
+  );
+  const iF = indice(hdr, c =>
+    c === 'fvm' || (c.includes('fvm') && !c.includes('1000'))
+  );
+
+  if(iN < 0)
+    throw new Error('Non trovo la colonna "Nome".');
+
+  return corpo.map(r => ({
+    n: r[iN],
+    r: iR >= 0 ? r[iR] : 'C',
+    sq: iS >= 0 ? r[iS] : '?',
+    qt: iQ >= 0 ? numero(r[iQ]) : null,
+    fvm: iF >= 0 ? numero(r[iF]) : null
+  }));
+}
+
+$('#fabdata').addEventListener('click', ()=>{
+  $('#rosaDataSheet').classList.add('on');
+});
+
+$('#closeRosaData').addEventListener('click', ()=>{
+  $('#rosaDataSheet').classList.remove('on');
+});
+
+$('#rosaDataSheet').addEventListener('click', e=>{
+  if(e.target.id === 'rosaDataSheet'){
+    $('#rosaDataSheet').classList.remove('on');
+  }
+});
+
+$('#rosaFile').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+
+  const esito = $('#esRosa');
+  esito.textContent = 'Caricamento…';
+  esito.className = 'esito';
+
+  const reader = new FileReader();
+
+  reader.onload = ()=>{
+    try{
+      const nuovi = importaRosaDaTesto(reader.result, file.name);
+      const n = aggiornaDatasetGiocatori(nuovi);
+
+      esito.textContent = `${n} giocatori caricati correttamente.`;
+      esito.className = 'esito';
+
+    }catch(err){
+      esito.textContent = err.message;
+      esito.className = 'esito err';
+    }
+  };
+
+  reader.onerror = ()=>{
+    esito.textContent = 'Impossibile leggere il file.';
+    esito.className = 'esito err';
+  };
+
+  reader.readAsText(file);
+});
+
+$('#rosaApplica').addEventListener('click', ()=>{
+  const testo = $('#txtRosa').value.trim();
+  const esito = $('#esRosaTxt');
+
+  if(!testo){
+    esito.textContent = 'Incolla prima i dati.';
+    esito.className = 'esito err';
+    return;
+  }
+
+  try{
+    const nuovi = importaRosaDaTesto(testo);
+    const n = aggiornaDatasetGiocatori(nuovi);
+
+    esito.textContent = `${n} giocatori caricati correttamente.`;
+    esito.className = 'esito';
+
+  }catch(err){
+    esito.textContent = err.message;
+    esito.className = 'esito err';
+  }
+});
 $('#ocrSheet').addEventListener('click', e=>{
   if(e.target.id==='ocrSheet') chiudiOcr();
 });
